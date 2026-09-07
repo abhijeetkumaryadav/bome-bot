@@ -6,40 +6,63 @@ import time
 from playwright.sync_api import sync_playwright
 
 # CONFIGURATION
-SOURCE_CHANNEL = "https://www.youtube.com/@DeepsInsights"  # REPLACE THIS WITH YOUR SOURCE CHANNEL URL
+SOURCE_CHANNEL = "https://www.youtube.com/@DeepsInsights"  # Change this to your source channel
 UPLOAD_LIMIT = 12  # Max videos per day
 
-# Load cookies from environment variable (we will store it on GitHub)
+# Load cookies from environment variable (set in GitHub Secrets)
 COOKIES_JSON = os.environ.get("YOUTUBE_COOKIES")
 if not COOKIES_JSON:
     raise Exception("YOUTUBE_COOKIES environment variable not set")
 
 cookies = json.loads(COOKIES_JSON)
 
-# Step 1: Download the latest Short using yt-dlp
+# Step 1: Download the latest Short using yt-dlp with cookies
 def download_latest_short():
     print("[1/5] Fetching latest Short from source...")
+    
+    # Write cookies to a temporary file (yt-dlp needs it in Netscape format)
+    # But yt-dlp also accepts JSON cookies via --cookies, so we can just pass the JSON file
+    cookies_file = "cookies.json"
+    with open(cookies_file, "w") as f:
+        json.dump(cookies, f)
+    
+    # Get the latest video ID
     cmd = [
         "yt-dlp",
-        "--get-id",  # Only get video ID
+        "--get-id",
         "--no-download",
+        "--cookies", cookies_file,
         SOURCE_CHANNEL
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        print(f"yt-dlp error: {result.stderr}")
+        raise Exception("Failed to fetch video ID")
+    
     video_id = result.stdout.strip().split("\n")[0]
     if not video_id:
         raise Exception("No video found")
 
     print(f"Found video ID: {video_id}")
     
-    # Download the video
+    # Download the video with cookies
     cmd_dl = [
         "yt-dlp",
         "-f", "mp4",
         "-o", "source.mp4",
+        "--cookies", cookies_file,
         f"https://www.youtube.com/shorts/{video_id}"
     ]
-    subprocess.run(cmd_dl, check=True)
+    dl_result = subprocess.run(cmd_dl, capture_output=True, text=True)
+    
+    if dl_result.returncode != 0:
+        print(f"Download error: {dl_result.stderr}")
+        raise Exception("Failed to download video")
+    
+    # Clean up cookies file
+    os.remove(cookies_file)
+    
     return video_id
 
 # Step 2: Mutate video (pitch shift + 1px crop) to avoid duplicate detection
