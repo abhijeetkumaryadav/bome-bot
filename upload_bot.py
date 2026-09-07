@@ -16,7 +16,6 @@ SOURCE_CHANNEL = "https://www.youtube.com/@DeepsInsights"  # Change this to your
 UPLOAD_LIMIT = 12
 
 # Load cookies from environment variable
->>>>>>> 0d8a8def29f74e2f0be5e7a0a9574ba8d03af2af
 COOKIES_JSON = os.environ.get("YOUTUBE_COOKIES")
 if not COOKIES_JSON:
     raise Exception("YOUTUBE_COOKIES environment variable not set")
