@@ -1,90 +1,77 @@
 import os
 import json
+import base64
 import subprocess
 import random
 import time
 from playwright.sync_api import sync_playwright
 
 # CONFIGURATION
-<<<<<<< HEAD
-SOURCE_CHANNEL = "https://www.youtube.com/@DeepsInsights"  # Change this to your source channel
+SOURCE_CHANNEL = "https://www.youtube.com/@ComedyClub-ty"  # Change this to your source channel
 UPLOAD_LIMIT = 12  # Max videos per day
 
-# Load cookies from environment variable (set in GitHub Secrets)
-=======
-SOURCE_CHANNEL = "https://www.youtube.com/@DeepsInsights"  # Change this to your target source
-UPLOAD_LIMIT = 12
+# Load cookies from base64 secret
+COOKIES_B64 = os.environ.get("COOKIES_BASE64")
+if not COOKIES_B64:
+    raise Exception("COOKIES_BASE64 environment variable not set")
 
-# Load cookies from environment variable
-COOKIES_JSON = os.environ.get("YOUTUBE_COOKIES")
-if not COOKIES_JSON:
-    raise Exception("YOUTUBE_COOKIES environment variable not set")
+# Decode and save as cookies.txt
+with open("cookies.txt", "wb") as f:
+    f.write(base64.b64decode(COOKIES_B64))
 
-cookies = json.loads(COOKIES_JSON)
+print("[DEBUG] Cookies decoded and saved as cookies.txt")
 
-<<<<<<< HEAD
-=======
-# --- NEW FUNCTION: Convert JSON cookies to Netscape format ---
-def convert_cookies_to_netscape(cookies_list, output_file):
-    """Converts a JSON cookie array to a Netscape format .txt file for yt-dlp."""
-    with open(output_file, 'w') as f:
-        f.write("# Netscape HTTP Cookie File\n")
-        for cookie in cookies_list:
-            domain = cookie.get('domain', '')
-            # flag: 'TRUE' if domain starts with '.' to allow subdomains
-            flag = 'TRUE' if domain.startswith('.') else 'FALSE'
-            path = cookie.get('path', '/')
-            secure = 'TRUE' if cookie.get('secure', False) else 'FALSE'
-            # Convert expiration to integer (if missing, set to 1 year from now)
-            expiry = cookie.get('expirationDate')
-            if expiry is None:
-                expiry = int(time.time()) + 31536000  # 1 year
-            else:
-                expiry = int(expiry)
-            name = cookie.get('name', '')
-            value = cookie.get('value', '')
-            # Write: domain flag path secure expiry name value
-            f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expiry}\t{name}\t{value}\n")
-    print(f"[DEBUG] Cookies converted to Netscape format: {output_file}")
+# Parse cookies.txt for Playwright
+def parse_netscape_cookies(filepath):
+    cookies = []
+    with open(filepath, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 7:
+                domain = parts[0]
+                flag = parts[1]
+                path = parts[2]
+                secure = parts[3] == "TRUE"
+                expiry = float(parts[4]) if parts[4] != "0" else None
+                name = parts[5]
+                value = parts[6]
+                cookies.append({
+                    "name": name,
+                    "value": value,
+                    "domain": domain,
+                    "path": path,
+                    "secure": secure,
+                    "httpOnly": False,
+                    "expirationDate": expiry
+                })
+    return cookies
 
->>>>>>> 0d8a8def29f74e2f0be5e7a0a9574ba8d03af2af
+cookies = parse_netscape_cookies("cookies.txt")
+print(f"[DEBUG] Loaded {len(cookies)} cookies for Playwright")
+
 # Step 1: Download the latest Short using yt-dlp with cookies
 def download_latest_short():
     print("[1/5] Fetching latest Short from source...")
-    
-<<<<<<< HEAD
-    # Write cookies to a temporary file (yt-dlp needs it in Netscape format)
-    # But yt-dlp also accepts JSON cookies via --cookies, so we can just pass the JSON file
-    cookies_file = "cookies.json"
-    with open(cookies_file, "w") as f:
-        json.dump(cookies, f)
-=======
-    # Convert cookies to Netscape format for yt-dlp
-    cookies_file = "cookies.txt"
-    convert_cookies_to_netscape(cookies, cookies_file)
->>>>>>> 0d8a8def29f74e2f0be5e7a0a9574ba8d03af2af
     
     # Get the latest video ID
     cmd = [
         "yt-dlp",
         "--get-id",
         "--no-download",
-        "--cookies", cookies_file,
+        "--cookies", "cookies.txt",
         SOURCE_CHANNEL
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     
     if result.returncode != 0:
         print(f"yt-dlp error: {result.stderr}")
-<<<<<<< HEAD
-=======
-        os.remove(cookies_file)
->>>>>>> 0d8a8def29f74e2f0be5e7a0a9574ba8d03af2af
         raise Exception("Failed to fetch video ID")
     
     video_id = result.stdout.strip().split("\n")[0]
     if not video_id:
-        os.remove(cookies_file)
         raise Exception("No video found")
 
     print(f"Found video ID: {video_id}")
@@ -94,27 +81,15 @@ def download_latest_short():
         "yt-dlp",
         "-f", "mp4",
         "-o", "source.mp4",
-        "--cookies", cookies_file,
+        "--cookies", "cookies.txt",
         f"https://www.youtube.com/shorts/{video_id}"
     ]
     dl_result = subprocess.run(cmd_dl, capture_output=True, text=True)
     
-<<<<<<< HEAD
-=======
-    # Clean up cookies file
-    os.remove(cookies_file)
-    
->>>>>>> 0d8a8def29f74e2f0be5e7a0a9574ba8d03af2af
     if dl_result.returncode != 0:
         print(f"Download error: {dl_result.stderr}")
         raise Exception("Failed to download video")
     
-<<<<<<< HEAD
-    # Clean up cookies file
-    os.remove(cookies_file)
-    
-=======
->>>>>>> 0d8a8def29f74e2f0be5e7a0a9574ba8d03af2af
     return video_id
 
 # Step 2: Mutate video (pitch shift + crop) to avoid duplicate detection
@@ -142,7 +117,7 @@ def upload_video(title):
             args=['--no-sandbox', '--disable-dev-shm-usage']
         )
         context = browser.new_context()
-        # Add cookies (Playwright accepts the JSON format directly)
+        # Add cookies
         context.add_cookies(cookies)
         page = context.new_page()
         
@@ -172,20 +147,27 @@ def upload_video(title):
         # Set to Public
         page.click("tp-yt-paper-radio-button[name='PUBLIC']")
         
-        # Click through steps (Next, Next, Next, Publish)
+        # Click through steps
         for _ in range(3):
-            page.click("ytcp-button:has-text('Next')")
+            try:
+                page.click("ytcp-button:has-text('Next')", timeout=5000)
+            except:
+                pass
             page.wait_for_timeout(500)
         
         # Click Publish
-        page.click("ytcp-button:has-text('Publish')")
+        try:
+            page.click("ytcp-button:has-text('Publish')")
+        except:
+            page.click("ytcp-button:has-text('Done')")
+        
         print("[4/5] Upload successful!")
         browser.close()
 
 def main():
     video_id = download_latest_short()
     
-    # Check history to avoid duplicates
+    # Check if we already uploaded this video
     try:
         with open("history.txt", "r") as f:
             uploaded = f.read().splitlines()
@@ -196,7 +178,7 @@ def main():
         print(f"Video {video_id} already uploaded. Skipping.")
         return
     
-    # Check daily limit
+    # Count today's uploads
     today = time.strftime("%Y-%m-%d")
     daily_count = sum(1 for line in uploaded if line.startswith(today))
     if daily_count >= UPLOAD_LIMIT:
