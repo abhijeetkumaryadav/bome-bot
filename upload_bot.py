@@ -77,42 +77,62 @@ def upload_video(video_path, title):
         page = context.new_page()
 
         try:
-            # STEP 1: GO DIRECTLY TO THE UPLOAD PAGE (the one you saw in your browser)
-            # Use the exact URL pattern from your observation.
-            # We'll use the channel ID from the redirect. It's constant.
+            # Direct upload URL (observed from your browser)
             upload_url = "https://studio.youtube.com/channel/UC-PGIAfF6MGuaa-ZPv7lzLA/videos/upload?theme=dark&d=ud"
-            print(f"[UPLOAD] Navigating directly to: {upload_url}")
+            print(f"[UPLOAD] Navigating to: {upload_url}")
             page.goto(upload_url, wait_until="networkidle", timeout=30000)
             page.wait_for_timeout(3000)
 
-            # STEP 2: Select the file using the hidden input (NOW VISIBLE ON THIS PAGE)
-            print("[UPLOAD] Selecting file...")
-            # The file input is always present on the upload page.
-            file_input = page.locator("input[type='file'][name='Filedata']")
-            file_input.set_input_files(abs_path)
+            # Click the upload area to trigger the file chooser
+            print("[UPLOAD] Clicking upload area...")
+            # Common selectors for the drop zone / select files button
+            upload_selectors = [
+                "ytcp-uploads-file-picker",
+                "ytcp-uploads-drop-area",
+                ".upload-area",
+                "#upload-area",
+                "div[class*='upload']"
+            ]
+            upload_element = None
+            for selector in upload_selectors:
+                try:
+                    el = page.locator(selector).first
+                    if el.count() > 0 and el.is_visible():
+                        upload_element = el
+                        break
+                except:
+                    pass
+            if not upload_element:
+                raise Exception("Could not find upload area element.")
+            
+            # Use expect_file_chooser to intercept the native dialog
+            with page.expect_file_chooser(timeout=15000) as fc_info:
+                upload_element.click()
+            file_chooser = fc_info.value
+            file_chooser.set_files(abs_path)
             print("[UPLOAD] File selected.")
 
-            # STEP 3: Wait for upload to complete (progress bar)
+            # Wait for upload to complete by checking the title field becomes enabled
             print("[UPLOAD] Waiting for upload to complete...")
-            page.wait_for_selector("ytcp-uploads-progress", state="visible", timeout=30000)
-            page.wait_for_selector("ytcp-uploads-progress", state="hidden", timeout=300000)
-            print("[UPLOAD] Upload complete.")
+            # The title textarea is disabled during upload; we wait for it to be enabled
+            page.wait_for_selector("#title-textarea:not([disabled])", timeout=300000)
+            print("[UPLOAD] Upload complete (title field enabled).")
 
             page.wait_for_timeout(2000)
 
-            # STEP 4: Title
+            # Set title
             print("[UPLOAD] Setting title...")
             title_input = page.locator("#title-textarea")
             title_input.fill(title)
             print(f"[UPLOAD] Title set: {title}")
 
-            # STEP 5: Set Public
+            # Set to Public
             print("[UPLOAD] Setting visibility to Public...")
             public_radio = page.locator("tp-yt-paper-radio-button[name='PUBLIC']")
             public_radio.click()
             print("[UPLOAD] Visibility set to Public.")
 
-            # STEP 6: Click Next buttons (usually 3)
+            # Click Next buttons (usually 3 steps)
             for i in range(3):
                 try:
                     next_btn = page.locator("ytcp-button:has-text('Next')")
@@ -123,7 +143,7 @@ def upload_video(video_path, title):
                 except:
                     break
 
-            # STEP 7: Publish
+            # Publish
             print("[UPLOAD] Publishing...")
             try:
                 publish_btn = page.locator("ytcp-button:has-text('Publish')")
@@ -153,7 +173,7 @@ def main():
         print("No videos left.")
         return
 
-    # Daily limit
+    # Daily limit check
     try:
         with open("history.txt", "r") as f:
             uploaded_log = f.read().splitlines()
