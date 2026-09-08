@@ -1,2 +1,2 @@
-playwright
+playwright==1.40.0
 yt-dlp
