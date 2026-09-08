@@ -23,7 +23,7 @@ UPLOADED_FILE = "uploaded_ids.txt"
 HISTORY_FILE = "history.txt"
 TOKEN_FILE = "token.json"
 CLIENT_SECRET_FILE = "client_secret.json"
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]  # <-- UPDATED SCOPE
 
 # ---------- COOKIES DECODING ----------
 def load_cookies():
@@ -168,6 +168,7 @@ def upload_video(youtube, file_path, title, description=""):
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     response = request.execute()
     video_id = response["id"]
+    # Now try to update privacy to public (works with force-ssl scope)
     try:
         youtube.videos().update(
             part="status",
