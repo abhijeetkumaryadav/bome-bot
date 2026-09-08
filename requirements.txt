@@ -1,2 +1,4 @@
-playwright==1.40.0
-yt-dlp
+playwright
+google-api-python-client
+google-auth-oauthlib
+google-auth
