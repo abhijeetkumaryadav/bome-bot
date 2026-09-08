@@ -71,7 +71,7 @@ def log_upload(video_id, channel=None):
     with open(HISTORY_FILE, "a") as f:
         f.write(f"{timestamp} {video_id} {channel or 'unknown'}\n")
 
-# ---------- FETCH VIDEO IDs (android client + cookies) ----------
+# ---------- FETCH VIDEO IDs (web client + cookies + remote solver) ----------
 def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
     cmd = [
         "yt-dlp",
@@ -80,7 +80,8 @@ def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
         "--playlist-end", str(limit),
         "--js-runtimes", "node",
         "--remote-components", "ejs:github",
-        "--extractor-args", "youtube:player_client=android",  # Supports cookies
+        "--extractor-args", "youtube:player_client=web",  # web client supports cookies
+        "--extractor-args", "youtube:skip=hls,dash",     # Skip problematic formats
         "--cookies", "cookies.txt",
         channel_url + "/shorts"
     ]
@@ -92,7 +93,7 @@ def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
         print(f"[ERROR] Failed to fetch IDs from {channel_url}: {e.stderr}")
         return []
 
-# ---------- DOWNLOAD & MUTATE (android client + cookies) ----------
+# ---------- DOWNLOAD & MUTATE (web client + cookies) ----------
 def download_and_mutate(video_id, output_filename="source.mp4"):
     url = f"https://www.youtube.com/shorts/{video_id}"
     cmd_dl = [
@@ -101,7 +102,8 @@ def download_and_mutate(video_id, output_filename="source.mp4"):
         "-o", output_filename,
         "--js-runtimes", "node",
         "--remote-components", "ejs:github",
-        "--extractor-args", "youtube:player_client=android",
+        "--extractor-args", "youtube:player_client=web",
+        "--extractor-args", "youtube:skip=hls,dash",
         "--cookies", "cookies.txt",
         url
     ]
