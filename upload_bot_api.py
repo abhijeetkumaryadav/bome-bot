@@ -1,5 +1,6 @@
 import os
 import json
+import base64
 import time
 from datetime import datetime
 from pathlib import Path
@@ -11,23 +12,31 @@ from googleapiclient.http import MediaFileUpload
 
 # ----- CONFIG -----
 UPLOAD_LIMIT = 12
-# Use youtube.force-ssl scope to allow both upload and updates
-SCOPES = ["https://www.googleapis.com/auth/youtube.force-ssl"]
-TOKEN_FILE = "token.json"
-CLIENT_SECRET_FILE = "client_secret.json"
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+CLIENT_SECRET_FILE = "client_secret.json"  # Not committed – keep local
+
+# ----- LOAD TOKEN FROM SECRET OR LOCAL FILE -----
+TOKEN_B64 = os.environ.get("TOKEN_BASE64")
+if TOKEN_B64:
+    with open("token.json", "w") as f:
+        f.write(base64.b64decode(TOKEN_B64).decode())
+    print("[DEBUG] Token decoded from secret.")
+else:
+    print("[DEBUG] No TOKEN_BASE64 secret found. Using local token.json if exists.")
 
 # ----- AUTHENTICATION -----
 def get_authenticated_service():
     creds = None
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            # If no token, fallback to local OAuth flow (requires client_secret.json)
             flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_FILE, SCOPES)
             creds = flow.run_local_server(port=8080)
-        with open(TOKEN_FILE, "w") as token:
+        with open("token.json", "w") as token:
             token.write(creds.to_json())
     return build("youtube", "v3", credentials=creds)
 
@@ -48,9 +57,9 @@ def get_next_video():
             return video
     return None
 
-# ----- UPDATE PRIVACY FUNCTION -----
+# ----- UPDATE PRIVACY (If you want to keep it) -----
 def update_privacy(youtube, video_id, desired_status="public"):
-    """Attempt to change video privacy. Returns True if successful."""
+    """Change video privacy. Works only if audit approved."""
     try:
         request = youtube.videos().update(
             part="status",
@@ -80,7 +89,7 @@ def upload_video(youtube, video_path, title, description=""):
             "categoryId": "22"
         },
         "status": {
-            "privacyStatus": "private"   # Start private
+            "privacyStatus": "private"  # Start private
         }
     }
 
@@ -91,15 +100,8 @@ def upload_video(youtube, video_path, title, description=""):
     print(f"[UPLOAD] ✅ Success! Video ID: {video_id}")
     print(f"[UPLOAD] 🔗 URL: https://www.youtube.com/watch?v={video_id}")
 
-    # ---- AUTO-PUBLIC CONVERSION ----
-    # Try to make it public, fallback to unlisted
-    if update_privacy(youtube, video_id, "public"):
-        pass
-    elif update_privacy(youtube, video_id, "unlisted"):
-        print("[INFO] Video set to unlisted (public not allowed).")
-    else:
-        print("[INFO] Video remains private. Apply for YouTube API audit to enable public uploads.")
-
+    # Try to make it public (works after audit)
+    update_privacy(youtube, video_id, "public")
     return response
 
 # ----- MAIN -----
