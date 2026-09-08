@@ -39,12 +39,12 @@ jobs:
           git commit -m "Update upload tracking - $(date +'%Y-%m-%d %H:%M:%S')" || true
           git push
       
-      - name: Upload logs as artifact
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: uploader-logs-${{ github.run_id }}
-          path: |
-            uploaded.txt
-            history.txt
-          retention-days: 30
+    - name: Upload logs as artifact
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: uploader-logs-${{ github.run_id }}
+    path: |
+      uploaded.txt
+      history.txt
+    retention-days: 30
