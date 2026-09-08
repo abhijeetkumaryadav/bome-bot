@@ -77,52 +77,42 @@ def upload_video(video_path, title):
         page = context.new_page()
 
         try:
-            # Go to YouTube Studio
-            print("[UPLOAD] Navigating to Studio...")
-            page.goto("https://studio.youtube.com", wait_until="networkidle", timeout=30000)
+            # STEP 1: GO DIRECTLY TO THE UPLOAD PAGE (the one you saw in your browser)
+            # Use the exact URL pattern from your observation.
+            # We'll use the channel ID from the redirect. It's constant.
+            upload_url = "https://studio.youtube.com/channel/UC-PGIAfF6MGuaa-ZPv7lzLA/videos/upload?theme=dark&d=ud"
+            print(f"[UPLOAD] Navigating directly to: {upload_url}")
+            page.goto(upload_url, wait_until="networkidle", timeout=30000)
             page.wait_for_timeout(3000)
 
-            # Click CREATE button
-            create_btn = page.locator("ytcp-button#create-icon, ytcp-button[aria-label='Create'], ytcp-button:has-text('Create')")
-            create_btn.first.click(timeout=10000)
-            print("[UPLOAD] Clicked Create.")
-            page.wait_for_timeout(2000)
-
-            # Click "Upload videos"
-            upload_btn = page.locator("tp-yt-paper-listbox ytcp-button:has-text('Upload videos'), ytcp-button:has-text('Upload videos')")
-            upload_btn.first.click(timeout=10000)
-            print("[UPLOAD] Clicked Upload videos.")
-            page.wait_for_timeout(2000)
-
-            # Select file using the hidden input
-            print("[UPLOAD] Selecting file via hidden input...")
-            file_input = page.locator("input[name='Filedata']")
+            # STEP 2: Select the file using the hidden input (NOW VISIBLE ON THIS PAGE)
+            print("[UPLOAD] Selecting file...")
+            # The file input is always present on the upload page.
+            file_input = page.locator("input[type='file'][name='Filedata']")
             file_input.set_input_files(abs_path)
             print("[UPLOAD] File selected.")
 
-            # Wait for upload to complete (progress appears and disappears)
-            print("[UPLOAD] Waiting for upload...")
+            # STEP 3: Wait for upload to complete (progress bar)
+            print("[UPLOAD] Waiting for upload to complete...")
             page.wait_for_selector("ytcp-uploads-progress", state="visible", timeout=30000)
             page.wait_for_selector("ytcp-uploads-progress", state="hidden", timeout=300000)
             print("[UPLOAD] Upload complete.")
 
             page.wait_for_timeout(2000)
 
-            # Title
+            # STEP 4: Title
             print("[UPLOAD] Setting title...")
-            try:
-                page.fill("#title-textarea", title, timeout=10000)
-            except:
-                page.fill("ytcp-social-metadata-editor #title", title, timeout=10000)
+            title_input = page.locator("#title-textarea")
+            title_input.fill(title)
             print(f"[UPLOAD] Title set: {title}")
 
-            # Public
-            print("[UPLOAD] Setting Public...")
+            # STEP 5: Set Public
+            print("[UPLOAD] Setting visibility to Public...")
             public_radio = page.locator("tp-yt-paper-radio-button[name='PUBLIC']")
-            public_radio.click(timeout=10000)
-            print("[UPLOAD] Public set.")
+            public_radio.click()
+            print("[UPLOAD] Visibility set to Public.")
 
-            # Click Next buttons (usually 2-3)
+            # STEP 6: Click Next buttons (usually 3)
             for i in range(3):
                 try:
                     next_btn = page.locator("ytcp-button:has-text('Next')")
@@ -133,18 +123,20 @@ def upload_video(video_path, title):
                 except:
                     break
 
-            # Publish
+            # STEP 7: Publish
             print("[UPLOAD] Publishing...")
             try:
                 publish_btn = page.locator("ytcp-button:has-text('Publish')")
-                publish_btn.first.click(timeout=15000)
-                print("[UPLOAD] Published!")
-            except:
-                # If already published, try Done
-                done_btn = page.locator("ytcp-button:has-text('Done')")
-                if done_btn.count() > 0:
-                    done_btn.first.click(timeout=10000)
-                    print("[UPLOAD] Clicked Done.")
+                if publish_btn.count() > 0:
+                    publish_btn.first.click(timeout=15000)
+                    print("[UPLOAD] Published!")
+                else:
+                    done_btn = page.locator("ytcp-button:has-text('Done')")
+                    if done_btn.count() > 0:
+                        done_btn.first.click(timeout=10000)
+                        print("[UPLOAD] Clicked Done.")
+            except Exception as e:
+                print(f"[UPLOAD] Publish error: {e}")
 
             print("[UPLOAD] Workflow complete.")
 
@@ -161,7 +153,7 @@ def main():
         print("No videos left.")
         return
 
-    # Daily limit check
+    # Daily limit
     try:
         with open("history.txt", "r") as f:
             uploaded_log = f.read().splitlines()
