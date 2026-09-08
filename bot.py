@@ -25,6 +25,20 @@ TOKEN_FILE = "token.json"
 CLIENT_SECRET_FILE = "client_secret.json"
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
+# ---------- COOKIES DECODING ----------
+def load_cookies():
+    """Decode COOKIES_BASE64 secret and save as cookies.txt."""
+    cookies_b64 = os.environ.get("COOKIES_BASE64")
+    if cookies_b64:
+        with open("cookies.txt", "wb") as f:
+            f.write(base64.b64decode(cookies_b64))
+        print("[DEBUG] Cookies decoded and saved.")
+        return True
+    else:
+        print("[WARNING] COOKIES_BASE64 not set; yt-dlp may be blocked.")
+        return False
+
+# ---------- LOAD CHANNELS ----------
 def load_channels():
     if not os.path.exists(CHANNELS_FILE):
         raise Exception(f"{CHANNELS_FILE} not found!")
@@ -58,6 +72,7 @@ def log_upload(video_id, channel=None):
     with open(HISTORY_FILE, "a") as f:
         f.write(f"{timestamp} {video_id} {channel or 'unknown'}\n")
 
+# ---------- FETCH VIDEO IDs WITH COOKIES ----------
 def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
     """Return list of video IDs (latest 'limit' shorts) from a channel."""
     cmd = [
@@ -65,7 +80,8 @@ def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
         "--flat-playlist",
         "--get-id",
         "--playlist-end", str(limit),
-        "--js-runtimes", "node",   # ✅ Explicitly use Node.js
+        "--js-runtimes", "node",
+        "--cookies", "cookies.txt",    # <-- ADD COOKIES
         channel_url + "/shorts"
     ]
     try:
@@ -76,15 +92,16 @@ def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
         print(f"[ERROR] Failed to fetch IDs from {channel_url}: {e.stderr}")
         return []
 
+# ---------- DOWNLOAD & MUTATE WITH COOKIES ----------
 def download_and_mutate(video_id, output_filename="source.mp4"):
-    """Download video with yt-dlp, then apply FFmpeg mutation."""
+    """Download video with yt-dlp using cookies, then apply FFmpeg mutation."""
     url = f"https://www.youtube.com/shorts/{video_id}"
-    # ✅ Explicitly use Node.js
     cmd_dl = [
         "yt-dlp",
         "-f", "mp4",
         "-o", output_filename,
         "--js-runtimes", "node",
+        "--cookies", "cookies.txt",    # <-- ADD COOKIES
         url
     ]
     try:
@@ -113,6 +130,7 @@ def download_and_mutate(video_id, output_filename="source.mp4"):
     os.remove(output_filename)
     return mutated_file
 
+# ---------- YOUTUBE API UPLOAD ----------
 def get_authenticated_service():
     token_b64 = os.environ.get("TOKEN_BASE64")
     if token_b64:
@@ -156,7 +174,15 @@ def upload_video(youtube, file_path, title, description=""):
         print(f"[UPDATE] Could not set public: {e}. Video remains private.")
     return video_id
 
+# ---------- MAIN ----------
 def main():
+    # Load cookies first
+    cookies_ok = load_cookies()
+    if not cookies_ok:
+        print("[WARNING] No cookies loaded. yt-dlp may be blocked by YouTube.")
+    else:
+        print("[INFO] Cookies loaded successfully.")
+
     print("[START] BOME Auto Bot started.")
     print(f"[START] Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 

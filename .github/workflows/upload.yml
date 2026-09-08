@@ -2,8 +2,8 @@ name: BOME Upload Bot
 
 on:
   schedule:
-    - cron: '0 */2 * * *'
-  workflow_dispatch:
+    - cron: '0 */2 * * *'          # Every 2 hours
+  workflow_dispatch:                # Manual trigger
 
 jobs:
   upload:
@@ -33,13 +33,18 @@ jobs:
       - name: Run bot
         env:
           TOKEN_BASE64: ${{ secrets.TOKEN_BASE64 }}
+          COOKIES_BASE64: ${{ secrets.COOKIES_BASE64 }}
         run: python bot.py
 
-      - name: Commit and push changes
+      - name: Commit and push changes (queue, tracking files)
         if: always()
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add pending.txt downloaded_ids.txt uploaded_ids.txt history.txt || true
-          git commit -m "Automated update - $(date +'%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
+          if ! git diff --staged --quiet; then
+            git commit -m "Automated update - $(date +'%Y-%m-%d %H:%M:%S')"
+            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
+          else
+            echo "No changes to commit."
+          fi
