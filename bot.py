@@ -80,8 +80,8 @@ def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
         "--playlist-end", str(limit),
         "--js-runtimes", "node",
         "--remote-components", "ejs:github",
-        "--extractor-args", "youtube:player_client=web",  # web client supports cookies
-        "--extractor-args", "youtube:skip=hls,dash",     # Skip problematic formats
+        "--extractor-args", "youtube:player_client=web",
+        "--extractor-args", "youtube:skip=hls,dash",
         "--cookies", "cookies.txt",
         channel_url + "/shorts"
     ]
@@ -93,7 +93,7 @@ def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
         print(f"[ERROR] Failed to fetch IDs from {channel_url}: {e.stderr}")
         return []
 
-# ---------- DOWNLOAD & MUTATE (web client + cookies) ----------
+# ---------- DOWNLOAD & MUTATE (web client + cookies + scale+pad) ----------
 def download_and_mutate(video_id, output_filename="source.mp4"):
     url = f"https://www.youtube.com/shorts/{video_id}"
     cmd_dl = [
@@ -114,11 +114,12 @@ def download_and_mutate(video_id, output_filename="source.mp4"):
         return None
 
     mutated_file = f"mutated_{video_id}.mp4"
+    # Scale to fit 1080x1920 (9:16) and pad with black bars to center
     cmd_ff = [
         "ffmpeg",
         "-i", output_filename,
         "-af", "asetrate=44100*0.99,aresample=44100",
-        "-vf", "crop=ih*9/16:ih",
+        "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
         "-c:v", "libx264",
         "-preset", "fast",
         "-y",
