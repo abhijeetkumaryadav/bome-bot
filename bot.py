@@ -5,7 +5,7 @@ import base64
 import subprocess
 import time
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -71,17 +71,16 @@ def log_upload(video_id, channel=None):
     with open(HISTORY_FILE, "a") as f:
         f.write(f"{timestamp} {video_id} {channel or 'unknown'}\n")
 
-# ---------- FETCH VIDEO IDs WITH REMOTE SOLVER ----------
+# ---------- FETCH VIDEO IDs (android client + cookies) ----------
 def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
-    """Return list of video IDs using iOS client + remote solver."""
     cmd = [
         "yt-dlp",
         "--flat-playlist",
         "--get-id",
         "--playlist-end", str(limit),
         "--js-runtimes", "node",
-        "--remote-components", "ejs:github",      # 🔥 Install remote solver
-        "--extractor-args", "youtube:player_client=ios",  # Use iOS client
+        "--remote-components", "ejs:github",
+        "--extractor-args", "youtube:player_client=android",  # Supports cookies
         "--cookies", "cookies.txt",
         channel_url + "/shorts"
     ]
@@ -93,9 +92,8 @@ def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
         print(f"[ERROR] Failed to fetch IDs from {channel_url}: {e.stderr}")
         return []
 
-# ---------- DOWNLOAD & MUTATE WITH REMOTE SOLVER ----------
+# ---------- DOWNLOAD & MUTATE (android client + cookies) ----------
 def download_and_mutate(video_id, output_filename="source.mp4"):
-    """Download using iOS client + remote solver, then mutate."""
     url = f"https://www.youtube.com/shorts/{video_id}"
     cmd_dl = [
         "yt-dlp",
@@ -103,7 +101,7 @@ def download_and_mutate(video_id, output_filename="source.mp4"):
         "-o", output_filename,
         "--js-runtimes", "node",
         "--remote-components", "ejs:github",
-        "--extractor-args", "youtube:player_client=ios",
+        "--extractor-args", "youtube:player_client=android",
         "--cookies", "cookies.txt",
         url
     ]
