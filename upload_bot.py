@@ -2,26 +2,23 @@ import os
 import json
 import base64
 import subprocess
-import random
 import time
 from playwright.sync_api import sync_playwright
 
-# CONFIGURATION
-SOURCE_CHANNEL = "https://www.youtube.com/@ComedyClub-ty"  # Change this to your source channel
-UPLOAD_LIMIT = 12  # Max videos per day
+# CONFIG
+UPLOAD_LIMIT = 12
 
 # Load cookies from base64 secret
 COOKIES_B64 = os.environ.get("COOKIES_BASE64")
 if not COOKIES_B64:
     raise Exception("COOKIES_BASE64 environment variable not set")
 
-# Decode and save as cookies.txt
 with open("cookies.txt", "wb") as f:
     f.write(base64.b64decode(COOKIES_B64))
 
-print("[DEBUG] Cookies decoded and saved as cookies.txt")
+print("[DEBUG] Cookies decoded.")
 
-# Parse cookies.txt for Playwright
+# Parse cookies for Playwright
 def parse_netscape_cookies(filepath):
     cookies = []
     with open(filepath, "r") as f:
@@ -31,123 +28,68 @@ def parse_netscape_cookies(filepath):
                 continue
             parts = line.split("\t")
             if len(parts) >= 7:
-                domain = parts[0]
-                flag = parts[1]
-                path = parts[2]
-                secure = parts[3] == "TRUE"
-                expiry = float(parts[4]) if parts[4] != "0" else None
-                name = parts[5]
-                value = parts[6]
+                domain, flag, path, secure, expiry, name, value = parts[:7]
                 cookies.append({
                     "name": name,
                     "value": value,
                     "domain": domain,
                     "path": path,
-                    "secure": secure,
+                    "secure": secure == "TRUE",
                     "httpOnly": False,
-                    "expirationDate": expiry
+                    "expirationDate": float(expiry) if expiry != "0" else None
                 })
     return cookies
 
 cookies = parse_netscape_cookies("cookies.txt")
-print(f"[DEBUG] Loaded {len(cookies)} cookies for Playwright")
+print(f"[DEBUG] Loaded {len(cookies)} cookies")
 
-# Step 1: Download the latest Short using yt-dlp with cookies
-def download_latest_short():
-    print("[1/5] Fetching latest Short from source...")
+def get_next_video():
+    try:
+        with open("queue.txt", "r") as f:
+            all_videos = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        raise Exception("queue.txt not found!")
     
-    # Get the latest video ID
-    cmd = [
-        "yt-dlp",
-        "--get-id",
-        "--no-download",
-        "--cookies", "cookies.txt",
-        SOURCE_CHANNEL
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        with open("uploaded.txt", "r") as f:
+            uploaded = [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        uploaded = []
     
-    if result.returncode != 0:
-        print(f"yt-dlp error: {result.stderr}")
-        raise Exception("Failed to fetch video ID")
-    
-    video_id = result.stdout.strip().split("\n")[0]
-    if not video_id:
-        raise Exception("No video found")
+    for video in all_videos:
+        if video not in uploaded:
+            return video
+    return None
 
-    print(f"Found video ID: {video_id}")
-    
-    # Download the video with cookies
-    cmd_dl = [
-        "yt-dlp",
-        "-f", "mp4",
-        "-o", "source.mp4",
-        "--cookies", "cookies.txt",
-        f"https://www.youtube.com/shorts/{video_id}"
-    ]
-    dl_result = subprocess.run(cmd_dl, capture_output=True, text=True)
-    
-    if dl_result.returncode != 0:
-        print(f"Download error: {dl_result.stderr}")
-        raise Exception("Failed to download video")
-    
-    return video_id
-
-# Step 2: Mutate video (pitch shift + crop) to avoid duplicate detection
-def mutate_video():
-    print("[2/5] Mutating video (pitch shift + crop)...")
-    cmd = [
-        "ffmpeg",
-        "-i", "source.mp4",
-        "-af", "asetrate=44100*0.99,aresample=44100",
-        "-vf", "crop=ih*9/16:ih",
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-y",
-        "mutated.mp4"
-    ]
-    subprocess.run(cmd, check=True)
-
-# Step 3: Upload using Playwright
-def upload_video(title):
-    print("[3/5] Uploading via Playwright...")
+def upload_video(video_path, title):
+    print(f"[UPLOAD] Uploading: {video_path}")
     with sync_playwright() as p:
-        # Launch headless Chrome with sandbox disabled for GitHub Actions
         browser = p.chromium.launch(
             headless=True,
             args=['--no-sandbox', '--disable-dev-shm-usage']
         )
         context = browser.new_context()
-        # Add cookies
         context.add_cookies(cookies)
         page = context.new_page()
         
-        # Go to YouTube Studio
         page.goto("https://studio.youtube.com")
         page.wait_for_timeout(2000)
         
-        # Click Upload button
         page.click("ytcp-button#create-icon")
         page.click("tp-yt-paper-listbox ytcp-button:has-text('Upload videos')")
         page.wait_for_timeout(1000)
         
-        # Select file
         with page.expect_file_chooser() as fc_info:
             page.click("ytcp-uploads-file-picker")
         file_chooser = fc_info.value
-        file_chooser.set_files("mutated.mp4")
+        file_chooser.set_files(video_path)
         
-        # Wait for upload to process
         page.wait_for_selector("ytcp-uploads-progress", state="visible")
         page.wait_for_selector("ytcp-uploads-progress", state="hidden", timeout=60000)
         
-        # Fill title
-        title_input = page.locator("#title-textarea")
-        title_input.fill(title)
-        
-        # Set to Public
+        page.locator("#title-textarea").fill(title)
         page.click("tp-yt-paper-radio-button[name='PUBLIC']")
         
-        # Click through steps
         for _ in range(3):
             try:
                 page.click("ytcp-button:has-text('Next')", timeout=5000)
@@ -155,48 +97,43 @@ def upload_video(title):
                 pass
             page.wait_for_timeout(500)
         
-        # Click Publish
         try:
             page.click("ytcp-button:has-text('Publish')")
         except:
             page.click("ytcp-button:has-text('Done')")
         
-        print("[4/5] Upload successful!")
+        print("[UPLOAD] Success!")
         browser.close()
 
 def main():
-    video_id = download_latest_short()
+    video_path = get_next_video()
+    if not video_path:
+        print("No videos left in queue. Stopping.")
+        return
     
-    # Check if we already uploaded this video
     try:
         with open("history.txt", "r") as f:
-            uploaded = f.read().splitlines()
-    except FileNotFoundError:
-        uploaded = []
+            uploaded_log = f.read().splitlines()
+    except:
+        uploaded_log = []
     
-    if video_id in uploaded:
-        print(f"Video {video_id} already uploaded. Skipping.")
-        return
-    
-    # Count today's uploads
     today = time.strftime("%Y-%m-%d")
-    daily_count = sum(1 for line in uploaded if line.startswith(today))
+    daily_count = sum(1 for line in uploaded_log if line.startswith(today))
     if daily_count >= UPLOAD_LIMIT:
-        print(f"Daily limit of {UPLOAD_LIMIT} reached. Stopping.")
+        print(f"Daily limit ({UPLOAD_LIMIT}) reached. Stopping.")
         return
+
+    vid_num = video_path.split("_")[1].split(".")[0]
+    title = f"BOME Daily 🔥 #{vid_num} #BOME #BookOfMeme #Solana #Shorts"
     
-    mutate_video()
+    upload_video(video_path, title)
     
-    # Generate SEO title
-    title = f"BOME Daily 🔥 #{video_id[:4]} #BOME #BookOfMeme #Solana #Shorts"
-    
-    upload_video(title)
-    
-    # Log upload
+    with open("uploaded.txt", "a") as f:
+        f.write(f"{video_path}\n")
     with open("history.txt", "a") as f:
-        f.write(f"{today} {video_id}\n")
+        f.write(f"{today} {video_path}\n")
     
-    print("[5/5] Done!")
+    print("Done.")
 
 if __name__ == "__main__":
     main()
