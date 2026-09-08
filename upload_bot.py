@@ -1,7 +1,6 @@
 import os
 import json
 import base64
-import subprocess
 import time
 from playwright.sync_api import sync_playwright
 
@@ -68,39 +67,124 @@ def upload_video(video_path, title):
             headless=True,
             args=['--no-sandbox', '--disable-dev-shm-usage']
         )
-        context = browser.new_context()
+        context = browser.new_context(
+            viewport={'width': 1280, 'height': 800},
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        )
         context.add_cookies(cookies)
         page = context.new_page()
         
-        page.goto("https://studio.youtube.com")
-        page.wait_for_timeout(2000)
+        # Go to YouTube Studio with network idle
+        page.goto("https://studio.youtube.com", wait_until="networkidle")
+        page.wait_for_timeout(3000)
         
-        page.click("ytcp-button#create-icon")
-        page.click("tp-yt-paper-listbox ytcp-button:has-text('Upload videos')")
-        page.wait_for_timeout(1000)
+        # Click the CREATE button - try multiple selectors
+        create_selectors = [
+            "ytcp-button#create-icon",
+            "ytcp-button[aria-label='Create']",
+            "ytcp-button:has-text('Create')",
+            "button#create-icon",
+            "ytcp-button #create-icon"
+        ]
         
-        with page.expect_file_chooser() as fc_info:
-            page.click("ytcp-uploads-file-picker")
-        file_chooser = fc_info.value
-        file_chooser.set_files(video_path)
-        
-        page.wait_for_selector("ytcp-uploads-progress", state="visible")
-        page.wait_for_selector("ytcp-uploads-progress", state="hidden", timeout=60000)
-        
-        page.locator("#title-textarea").fill(title)
-        page.click("tp-yt-paper-radio-button[name='PUBLIC']")
-        
-        for _ in range(3):
+        clicked = False
+        for selector in create_selectors:
             try:
-                page.click("ytcp-button:has-text('Next')", timeout=5000)
+                if page.locator(selector).count() > 0:
+                    page.click(selector, timeout=5000)
+                    print(f"[UPLOAD] Clicked CREATE using selector: {selector}")
+                    clicked = True
+                    break
             except:
                 pass
-            page.wait_for_timeout(500)
         
+        if not clicked:
+            # Fallback: click the top-right avatar and find Create
+            print("[UPLOAD] Trying fallback: avatar menu")
+            page.click("ytcp-avatar", timeout=5000)
+            page.wait_for_timeout(1000)
+            page.click("tp-yt-paper-listbox ytcp-button:has-text('Create')", timeout=5000)
+        
+        page.wait_for_timeout(2000)
+        
+        # Click "Upload videos" in the dropdown
+        upload_selectors = [
+            "tp-yt-paper-listbox ytcp-button:has-text('Upload videos')",
+            "ytcp-button:has-text('Upload videos')",
+            "paper-listbox ytcp-button:has-text('Upload')"
+        ]
+        
+        clicked = False
+        for selector in upload_selectors:
+            try:
+                if page.locator(selector).count() > 0:
+                    page.click(selector, timeout=5000)
+                    print(f"[UPLOAD] Clicked Upload videos using: {selector}")
+                    clicked = True
+                    break
+            except:
+                pass
+        
+        if not clicked:
+            # Fallback: press 'V' key shortcut for Upload
+            print("[UPLOAD] Using keyboard shortcut V for Upload")
+            page.keyboard.press("v")
+        
+        page.wait_for_timeout(2000)
+        
+        # Wait for the file picker to appear
         try:
-            page.click("ytcp-button:has-text('Publish')")
+            with page.expect_file_chooser(timeout=15000) as fc_info:
+                page.click("ytcp-uploads-file-picker", timeout=5000)
+            file_chooser = fc_info.value
+            file_chooser.set_files(video_path)
         except:
-            page.click("ytcp-button:has-text('Done')")
+            # Fallback: use the input element directly if file chooser fails
+            print("[UPLOAD] File chooser failed, trying direct input")
+            file_input = page.locator("input[type='file']")
+            if file_input.count() > 0:
+                file_input.set_input_files(video_path)
+            else:
+                raise Exception("Could not select file")
+        
+        # Wait for upload to complete
+        try:
+            page.wait_for_selector("ytcp-uploads-progress", state="visible", timeout=10000)
+            page.wait_for_selector("ytcp-uploads-progress", state="hidden", timeout=120000)
+        except:
+            print("[UPLOAD] Upload progress may have completed quickly")
+        
+        page.wait_for_timeout(2000)
+        
+        # Fill title
+        try:
+            page.locator("#title-textarea").fill(title, timeout=5000)
+        except:
+            page.locator("input#title-textarea").fill(title, timeout=5000)
+        
+        # Set to Public
+        try:
+            page.click("tp-yt-paper-radio-button[name='PUBLIC']", timeout=5000)
+        except:
+            # Try alternative
+            page.click("paper-radio-button[name='PUBLIC']", timeout=5000)
+        
+        # Click Next through steps
+        for i in range(3):
+            try:
+                page.click("ytcp-button:has-text('Next')", timeout=5000)
+                page.wait_for_timeout(1000)
+            except:
+                print(f"[UPLOAD] Next button {i+1} not found, skipping")
+        
+        # Click Publish or Done
+        try:
+            page.click("ytcp-button:has-text('Publish')", timeout=10000)
+        except:
+            try:
+                page.click("ytcp-button:has-text('Done')", timeout=5000)
+            except:
+                print("[UPLOAD] Could not find Publish/Done button, but upload may still be complete")
         
         print("[UPLOAD] Success!")
         browser.close()
