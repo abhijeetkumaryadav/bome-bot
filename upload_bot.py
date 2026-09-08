@@ -74,80 +74,24 @@ def upload_video(video_path, title):
         context.add_cookies(cookies)
         page = context.new_page()
         
-        # Go to YouTube Studio with network idle
-        page.goto("https://studio.youtube.com", wait_until="networkidle")
+        # Go directly to the upload page
+        print("[UPLOAD] Going to upload page...")
+        page.goto("https://www.youtube.com/upload", wait_until="networkidle")
         page.wait_for_timeout(3000)
         
-        # Click the CREATE button - try multiple selectors
-        create_selectors = [
-            "ytcp-button#create-icon",
-            "ytcp-button[aria-label='Create']",
-            "ytcp-button:has-text('Create')",
-            "button#create-icon",
-            "ytcp-button #create-icon"
-        ]
-        
-        clicked = False
-        for selector in create_selectors:
-            try:
-                if page.locator(selector).count() > 0:
-                    page.click(selector, timeout=5000)
-                    print(f"[UPLOAD] Clicked CREATE using selector: {selector}")
-                    clicked = True
-                    break
-            except:
-                pass
-        
-        if not clicked:
-            # Fallback: click the top-right avatar and find Create
-            print("[UPLOAD] Trying fallback: avatar menu")
-            page.click("ytcp-avatar", timeout=5000)
-            page.wait_for_timeout(1000)
-            page.click("tp-yt-paper-listbox ytcp-button:has-text('Create')", timeout=5000)
-        
-        page.wait_for_timeout(2000)
-        
-        # Click "Upload videos" in the dropdown
-        upload_selectors = [
-            "tp-yt-paper-listbox ytcp-button:has-text('Upload videos')",
-            "ytcp-button:has-text('Upload videos')",
-            "paper-listbox ytcp-button:has-text('Upload')"
-        ]
-        
-        clicked = False
-        for selector in upload_selectors:
-            try:
-                if page.locator(selector).count() > 0:
-                    page.click(selector, timeout=5000)
-                    print(f"[UPLOAD] Clicked Upload videos using: {selector}")
-                    clicked = True
-                    break
-            except:
-                pass
-        
-        if not clicked:
-            # Fallback: press 'V' key shortcut for Upload
-            print("[UPLOAD] Using keyboard shortcut V for Upload")
-            page.keyboard.press("v")
-        
-        page.wait_for_timeout(2000)
-        
-        # Wait for the file picker to appear
+        # Wait for the file input to appear and select the video
+        print("[UPLOAD] Selecting video file...")
+        file_input = page.locator("input[type='file']")
         try:
-            with page.expect_file_chooser(timeout=15000) as fc_info:
-                page.click("ytcp-uploads-file-picker", timeout=5000)
-            file_chooser = fc_info.value
-            file_chooser.set_files(video_path)
-        except:
-            # Fallback: use the input element directly if file chooser fails
-            print("[UPLOAD] File chooser failed, trying direct input")
-            file_input = page.locator("input[type='file']")
-            if file_input.count() > 0:
-                file_input.set_input_files(video_path)
-            else:
-                raise Exception("Could not select file")
+            file_input.wait_for(timeout=15000)
+            file_input.set_input_files(video_path)
+            print("[UPLOAD] File selected successfully!")
+        except Exception as e:
+            print(f"[UPLOAD] Failed to select file: {e}")
+            raise Exception("Could not select file")
         
         # Wait for upload to complete
+        print("[UPLOAD] Waiting for upload to complete...")
         try:
             page.wait_for_selector("ytcp-uploads-progress", state="visible", timeout=10000)
             page.wait_for_selector("ytcp-uploads-progress", state="hidden", timeout=120000)
@@ -157,16 +101,17 @@ def upload_video(video_path, title):
         page.wait_for_timeout(2000)
         
         # Fill title
+        print("[UPLOAD] Setting title...")
         try:
-            page.locator("#title-textarea").fill(title, timeout=5000)
+            page.fill("#title-textarea", title, timeout=5000)
         except:
-            page.locator("input#title-textarea").fill(title, timeout=5000)
+            page.fill("input#title-textarea", title, timeout=5000)
         
         # Set to Public
+        print("[UPLOAD] Setting to Public...")
         try:
             page.click("tp-yt-paper-radio-button[name='PUBLIC']", timeout=5000)
         except:
-            # Try alternative
             page.click("paper-radio-button[name='PUBLIC']", timeout=5000)
         
         # Click Next through steps
@@ -177,7 +122,8 @@ def upload_video(video_path, title):
             except:
                 print(f"[UPLOAD] Next button {i+1} not found, skipping")
         
-        # Click Publish or Done
+        # Click Publish
+        print("[UPLOAD] Publishing...")
         try:
             page.click("ytcp-button:has-text('Publish')", timeout=10000)
         except:
@@ -186,7 +132,7 @@ def upload_video(video_path, title):
             except:
                 print("[UPLOAD] Could not find Publish/Done button, but upload may still be complete")
         
-        print("[UPLOAD] Success!")
+        print("[UPLOAD] Upload complete!")
         browser.close()
 
 def main():
