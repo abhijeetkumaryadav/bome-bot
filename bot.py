@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+import os
+import json
+import base64
+import subprocess
+import time
+import shutil
+from datetime import datetime, timedelta
+from pathlib import Path
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+
+# ---------- CONFIG ----------
+UPLOAD_LIMIT = 12                 # Max uploads per day
+MAX_PER_CHANNEL = 20              # Max new videos to fetch per channel per refresh
+CHANNELS_FILE = "channels.txt"
+DOWNLOADED_FILE = "downloaded_ids.txt"
+PENDING_FILE = "pending.txt"
+UPLOADED_FILE = "uploaded_ids.txt"
+HISTORY_FILE = "history.txt"
+TOKEN_FILE = "token.json"
+CLIENT_SECRET_FILE = "client_secret.json"   # only needed locally
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+
+# ---------- LOAD CHANNELS ----------
+def load_channels():
+    if not os.path.exists(CHANNELS_FILE):
+        raise Exception(f"{CHANNELS_FILE} not found! Create it with channel URLs.")
+    with open(CHANNELS_FILE, "r") as f:
+        return [line.strip() for line in f if line.strip()]
+
+# ---------- PERSISTENCE HELPERS ----------
+def load_ids(filepath):
+    if not os.path.exists(filepath):
+        return set()
+    with open(filepath, "r") as f:
+        return {line.strip() for line in f if line.strip()}
+
+def save_ids(filepath, ids):
+    with open(filepath, "w") as f:
+        for vid in sorted(ids):
+            f.write(vid + "\n")
+
+def load_pending():
+    if not os.path.exists(PENDING_FILE):
+        return []
+    with open(PENDING_FILE, "r") as f:
+        return [line.strip() for line in f if line.strip()]
+
+def save_pending(pending):
+    with open(PENDING_FILE, "w") as f:
+        for vid in pending:
+            f.write(vid + "\n")
+
+def add_pending(video_ids):
+    pending = load_pending()
+    existing = set(pending)
+    for vid in video_ids:
+        if vid not in existing:
+            pending.append(vid)
+    save_pending(pending)
+
+def log_upload(video_id, channel=None):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(HISTORY_FILE, "a") as f:
+        f.write(f"{timestamp} {video_id} {channel or 'unknown'}\n")
+
+# ---------- FETCH VIDEO IDs FROM CHANNEL ----------
+def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
+    """Return list of video IDs (latest 'limit' shorts) from a channel."""
+    cmd = [
+        "yt-dlp",
+        "--flat-playlist",
+        "--get-id",
+        "--playlist-end", str(limit),
+        channel_url + "/shorts"   # focus on shorts
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        ids = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        return ids
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] Failed to fetch IDs from {channel_url}: {e.stderr}")
+        return []
+
+# ---------- DOWNLOAD & MUTATE VIDEO ----------
+def download_and_mutate(video_id, output_filename="source.mp4"):
+    """Download video with yt-dlp, then apply FFmpeg mutation."""
+    url = f"https://www.youtube.com/shorts/{video_id}"
+    # Download
+    cmd_dl = ["yt-dlp", "-f", "mp4", "-o", output_filename, url]
+    try:
+        subprocess.run(cmd_dl, check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] Download failed for {video_id}: {e.stderr}")
+        return None
+
+    # Mutate: crop to vertical (9:16) + pitch shift 1%
+    mutated_file = f"mutated_{video_id}.mp4"
+    cmd_ff = [
+        "ffmpeg",
+        "-i", output_filename,
+        "-af", "asetrate=44100*0.99,aresample=44100",
+        "-vf", "crop=ih*9/16:ih",
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-y",
+        mutated_file
+    ]
+    try:
+        subprocess.run(cmd_ff, check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        print(f"[ERROR] Mutation failed for {video_id}: {e.stderr}")
+        return None
+
+    # Delete original
+    os.remove(output_filename)
+    return mutated_file
+
+# ---------- YOUTUBE API UPLOAD ----------
+def get_authenticated_service():
+    # Token handling from environment or local file
+    token_b64 = os.environ.get("TOKEN_BASE64")
+    if token_b64:
+        with open(TOKEN_FILE, "w") as f:
+            f.write(base64.b64decode(token_b64).decode())
+        print("[DEBUG] Token decoded from secret.")
+    creds = None
+    if os.path.exists(TOKEN_FILE):
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            # Local fallback: use OAuth flow (requires client_secret.json)
+            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_FILE, SCOPES)
+            creds = flow.run_local_server(port=8080)
+        with open(TOKEN_FILE, "w") as token:
+            token.write(creds.to_json())
+    return build("youtube", "v3", credentials=creds)
+
+def upload_video(youtube, file_path, title, description=""):
+    """Upload a single video and return its video ID."""
+    body = {
+        "snippet": {
+            "title": title,
+            "description": description,
+            "tags": ["BOME", "Shorts", "Automated"],
+            "categoryId": "22"
+        },
+        "status": {
+            "privacyStatus": "private"   # will be changed to public later if audit passed
+        }
+    }
+    media = MediaFileUpload(file_path, chunksize=-1, resumable=True)
+    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+    response = request.execute()
+    video_id = response["id"]
+    # Try to make it public (if audit not approved, it will stay private)
+    try:
+        youtube.videos().update(
+            part="status",
+            body={"id": video_id, "status": {"privacyStatus": "public"}}
+        ).execute()
+        print(f"[UPDATE] Video {video_id} set to public.")
+    except Exception as e:
+        print(f"[UPDATE] Could not set public: {e}. Video remains private.")
+    return video_id
+
+# ---------- MAIN ----------
+def main():
+    print("[START] BOME Auto Bot started.")
+    print(f"[START] Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # 1. Load channels
+    channels = load_channels()
+    if not channels:
+        print("[ERROR] No channels found in channels.txt")
+        return
+
+    # 2. Load downloaded & uploaded IDs
+    downloaded = load_ids(DOWNLOADED_FILE)
+    uploaded = load_ids(UPLOADED_FILE)
+    pending = load_pending()
+
+    # 3. Fetch new videos from each channel
+    print("[REFRESH] Scanning channels for new videos...")
+    new_videos = []
+    for channel in channels:
+        video_ids = get_channel_video_ids(channel)
+        new_ids = [vid for vid in video_ids if vid not in downloaded and vid not in uploaded]
+        if new_ids:
+            print(f"  {channel} → {len(new_ids)} new videos found.")
+            new_videos.extend(new_ids)
+            # Mark as downloaded immediately to avoid re-downloading
+            downloaded.update(new_ids)
+    if new_videos:
+        # Append to pending queue
+        add_pending(new_videos)
+        save_ids(DOWNLOADED_FILE, downloaded)
+        print(f"[REFRESH] Added {len(new_videos)} new videos to pending queue.")
+
+    # 4. Reload pending after refresh
+    pending = load_pending()
+
+    # 5. Check daily upload limit
+    today = datetime.now().strftime("%Y-%m-%d")
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, "r") as f:
+            lines = f.readlines()
+        today_uploads = sum(1 for line in lines if line.startswith(today))
+    else:
+        today_uploads = 0
+
+    if today_uploads >= UPLOAD_LIMIT:
+        print(f"[UPLOAD] Daily limit ({UPLOAD_LIMIT}) reached. Stopping for today.")
+        return
+
+    # 6. Upload one video from pending if available
+    if not pending:
+        print("[UPLOAD] No videos in pending queue. Waiting for new content.")
+        return
+
+    next_video_id = pending[0]   # FIFO
+    print(f"[UPLOAD] Next video: {next_video_id}")
+
+    try:
+        # Download and mutate
+        mutated_file = download_and_mutate(next_video_id)
+        if not mutated_file:
+            raise Exception("Download/mutation failed.")
+        # Upload via API
+        youtube = get_authenticated_service()
+        title = f"BOME Daily 🔥 #{next_video_id[:4]} #BOME #BookOfMeme #Solana #Shorts"
+        video_id = upload_video(youtube, mutated_file, title, "Auto-generated BOME Short")
+        print(f"[UPLOAD] ✅ Uploaded successfully! Video ID: {video_id}")
+
+        # Cleanup
+        os.remove(mutated_file)
+
+        # Mark as uploaded
+        uploaded.add(next_video_id)
+        save_ids(UPLOADED_FILE, uploaded)
+
+        # Remove from pending
+        pending.pop(0)
+        save_pending(pending)
+
+        # Log
+        log_upload(next_video_id, channel="multiple")
+        print("[SUCCESS] Full cycle complete!")
+
+    except Exception as e:
+        print(f"[ERROR] Upload failed: {e}")
+        # If failed due to download or upload, we might want to keep it in pending,
+        # but we'll remove it anyway to avoid infinite loop. Or we could retry.
+        # Let's remove it to avoid blocking.
+        pending.pop(0)
+        save_pending(pending)
+        print("[INFO] Removed failed video from pending queue.")
+
+if __name__ == "__main__":
+    main()

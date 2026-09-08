@@ -2,39 +2,39 @@ name: BOME Upload Bot
 
 on:
   schedule:
-    - cron: '0 */2 * * *'
-  workflow_dispatch:
+    - cron: '0 */2 * * *'   # Every 2 hours
+  workflow_dispatch:         # Manual trigger
 
 jobs:
   upload:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      
+
       - name: Install dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      
-      - name: Run API uploader
+
+      - name: Run bot
         env:
           TOKEN_BASE64: ${{ secrets.TOKEN_BASE64 }}
-        run: python upload_bot_api.py
-      
-      - name: Upload logs as artifact
+        run: python bot.py
+
+      - name: Commit and push changes (queue, history)
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: uploader-logs-${{ github.run_id }}
-          path: |
-            uploaded.txt
-            history.txt
-            queue.txt
-          retention-days: 30
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add pending.txt downloaded_ids.txt uploaded_ids.txt history.txt || true
+          git commit -m "Automated update - $(date +'%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
