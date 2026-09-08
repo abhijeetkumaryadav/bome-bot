@@ -1,1 +1,3 @@
 videos/vid_001.mp4
+videos/vid_001.mp4
+videos/vid_002.mp4
