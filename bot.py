@@ -25,14 +25,12 @@ TOKEN_FILE = "token.json"
 CLIENT_SECRET_FILE = "client_secret.json"
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 
-# ---------- LOAD CHANNELS ----------
 def load_channels():
     if not os.path.exists(CHANNELS_FILE):
         raise Exception(f"{CHANNELS_FILE} not found!")
     with open(CHANNELS_FILE, "r") as f:
         return [line.strip() for line in f if line.strip()]
 
-# ---------- PERSISTENCE HELPERS ----------
 def load_ids(filepath):
     if not os.path.exists(filepath):
         return set()
@@ -60,13 +58,14 @@ def log_upload(video_id, channel=None):
     with open(HISTORY_FILE, "a") as f:
         f.write(f"{timestamp} {video_id} {channel or 'unknown'}\n")
 
-# ---------- FETCH VIDEO IDs FROM CHANNEL ----------
 def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
+    """Return list of video IDs (latest 'limit' shorts) from a channel."""
     cmd = [
         "yt-dlp",
         "--flat-playlist",
         "--get-id",
         "--playlist-end", str(limit),
+        "--js-runtimes", "node",   # ✅ Explicitly use Node.js
         channel_url + "/shorts"
     ]
     try:
@@ -77,10 +76,17 @@ def get_channel_video_ids(channel_url, limit=MAX_PER_CHANNEL):
         print(f"[ERROR] Failed to fetch IDs from {channel_url}: {e.stderr}")
         return []
 
-# ---------- DOWNLOAD & MUTATE VIDEO ----------
 def download_and_mutate(video_id, output_filename="source.mp4"):
+    """Download video with yt-dlp, then apply FFmpeg mutation."""
     url = f"https://www.youtube.com/shorts/{video_id}"
-    cmd_dl = ["yt-dlp", "-f", "mp4", "-o", output_filename, url]
+    # ✅ Explicitly use Node.js
+    cmd_dl = [
+        "yt-dlp",
+        "-f", "mp4",
+        "-o", output_filename,
+        "--js-runtimes", "node",
+        url
+    ]
     try:
         subprocess.run(cmd_dl, check=True, capture_output=True)
     except subprocess.CalledProcessError as e:
@@ -107,7 +113,6 @@ def download_and_mutate(video_id, output_filename="source.mp4"):
     os.remove(output_filename)
     return mutated_file
 
-# ---------- YOUTUBE API UPLOAD ----------
 def get_authenticated_service():
     token_b64 = os.environ.get("TOKEN_BASE64")
     if token_b64:
@@ -151,7 +156,6 @@ def upload_video(youtube, file_path, title, description=""):
         print(f"[UPDATE] Could not set public: {e}. Video remains private.")
     return video_id
 
-# ---------- MAIN ----------
 def main():
     print("[START] BOME Auto Bot started.")
     print(f"[START] Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -165,8 +169,9 @@ def main():
     uploaded = load_ids(UPLOADED_FILE)
     pending = load_pending()
 
-    # If pending is empty, fetch videos from the channel with fewest total videos
-    if not pending:
+    if pending:
+        print(f"[UPLOAD] {len(pending)} videos still pending.")
+    else:
         print("[REFRESH] No pending videos. Scanning channels for new content...")
         channel_data = []
         for channel in channels:
@@ -178,11 +183,8 @@ def main():
                 "new": len(new_ids),
                 "new_ids": new_ids
             })
-
-        # Sort by total video count (lowest first)
         channel_data.sort(key=lambda x: x["total"])
 
-        # Find first channel with new videos
         for data in channel_data:
             if data["new_ids"]:
                 print(f"  Adding {data['new']} videos from {data['url']} (total: {data['total']})")
@@ -190,12 +192,8 @@ def main():
                 pending.extend(data["new_ids"])
                 save_ids(DOWNLOADED_FILE, downloaded)
                 save_pending(pending)
-                # Stop after first channel with new videos
                 break
-        else:
-            print("[REFRESH] No new videos found on any channel.")
 
-    # Upload one video if daily limit not reached
     today = datetime.now().strftime("%Y-%m-%d")
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, "r") as f:
