@@ -6,7 +6,6 @@ from datetime import datetime
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-# CONFIG
 UPLOAD_LIMIT = 12
 
 # Load cookies
@@ -60,11 +59,10 @@ def get_next_video():
     return None
 
 def upload_video(video_path, title):
-    print(f"[UPLOAD] Starting upload for: {video_path}")
+    print(f"[UPLOAD] Starting: {video_path}")
     if not Path(video_path).exists():
-        raise Exception(f"Video file not found: {video_path}")
+        raise Exception(f"File not found: {video_path}")
     abs_path = str(Path(video_path).resolve())
-    print(f"[UPLOAD] Absolute path: {abs_path}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -79,86 +77,76 @@ def upload_video(video_path, title):
         page = context.new_page()
 
         try:
-            # Go to the direct upload page
-            print("[UPLOAD] Navigating to upload page...")
-            page.goto("https://www.youtube.com/upload", wait_until="networkidle", timeout=30000)
+            # Go to YouTube Studio
+            print("[UPLOAD] Navigating to Studio...")
+            page.goto("https://studio.youtube.com", wait_until="networkidle", timeout=30000)
+            page.wait_for_timeout(3000)
+
+            # Click CREATE button
+            create_btn = page.locator("ytcp-button#create-icon, ytcp-button[aria-label='Create'], ytcp-button:has-text('Create')")
+            create_btn.first.click(timeout=10000)
+            print("[UPLOAD] Clicked Create.")
             page.wait_for_timeout(2000)
 
-            # Wait for the upload area to be visible
-            print("[UPLOAD] Looking for upload area...")
-            upload_area = page.locator("div.upload-area, ytcp-uploads-panel, #upload-area")
-            upload_area.first.wait_for(state="visible", timeout=15000)
+            # Click "Upload videos"
+            upload_btn = page.locator("tp-yt-paper-listbox ytcp-button:has-text('Upload videos'), ytcp-button:has-text('Upload videos')")
+            upload_btn.first.click(timeout=10000)
+            print("[UPLOAD] Clicked Upload videos.")
+            page.wait_for_timeout(2000)
 
-            # Click the upload area to trigger file chooser
-            print("[UPLOAD] Clicking upload area to select files...")
-            with page.expect_file_chooser(timeout=15000) as fc_info:
-                upload_area.first.click()
-            file_chooser = fc_info.value
-            file_chooser.set_files(abs_path)
-            print("[UPLOAD] File selected!")
+            # Select file using the hidden input
+            print("[UPLOAD] Selecting file via hidden input...")
+            file_input = page.locator("input[name='Filedata']")
+            file_input.set_input_files(abs_path)
+            print("[UPLOAD] File selected.")
 
-            # Wait for upload to start (progress bar appears)
-            print("[UPLOAD] Waiting for upload progress...")
-            page.wait_for_selector("ytcp-uploads-progress, .upload-progress, [class*='progress']", 
-                                   state="visible", timeout=30000)
-            # Wait for upload to finish (progress disappears)
-            page.wait_for_selector("ytcp-uploads-progress, .upload-progress, [class*='progress']", 
-                                   state="hidden", timeout=300000)
-            print("[UPLOAD] Upload completed!")
+            # Wait for upload to complete (progress appears and disappears)
+            print("[UPLOAD] Waiting for upload...")
+            page.wait_for_selector("ytcp-uploads-progress", state="visible", timeout=30000)
+            page.wait_for_selector("ytcp-uploads-progress", state="hidden", timeout=300000)
+            print("[UPLOAD] Upload complete.")
 
             page.wait_for_timeout(2000)
 
-            # Fill title
+            # Title
             print("[UPLOAD] Setting title...")
             try:
-                title_input = page.locator("#title-textarea, #title, input[name='title']")
-                title_input.first.fill(title, timeout=10000)
-                print(f"[UPLOAD] Title set: {title}")
-            except Exception as e:
-                print(f"[UPLOAD] Title error: {e}")
-                # Fallback: use the text area
-                page.fill("textarea", title, timeout=10000)
+                page.fill("#title-textarea", title, timeout=10000)
+            except:
+                page.fill("ytcp-social-metadata-editor #title", title, timeout=10000)
+            print(f"[UPLOAD] Title set: {title}")
 
-            # Set to Public
-            print("[UPLOAD] Setting to Public...")
-            try:
-                public_radio = page.locator("tp-yt-paper-radio-button[name='PUBLIC'], paper-radio-button[name='PUBLIC'], input[value='PUBLIC']")
-                public_radio.first.click(timeout=10000)
-                print("[UPLOAD] Set to Public.")
-            except Exception as e:
-                print(f"[UPLOAD] Public radio error: {e}")
+            # Public
+            print("[UPLOAD] Setting Public...")
+            public_radio = page.locator("tp-yt-paper-radio-button[name='PUBLIC']")
+            public_radio.click(timeout=10000)
+            print("[UPLOAD] Public set.")
 
-            # Click "Next" buttons (usually 2-3 steps)
-            print("[UPLOAD] Proceeding through steps...")
+            # Click Next buttons (usually 2-3)
             for i in range(3):
                 try:
-                    next_btn = page.locator("ytcp-button:has-text('Next'), button:has-text('Next')")
+                    next_btn = page.locator("ytcp-button:has-text('Next')")
                     if next_btn.count() > 0:
                         next_btn.first.click(timeout=5000)
-                        print(f"[UPLOAD] Clicked Next {i+1}.")
+                        print(f"[UPLOAD] Next {i+1} clicked.")
                         page.wait_for_timeout(1000)
-                    else:
-                        break
                 except:
                     break
 
-            # Click Publish
+            # Publish
             print("[UPLOAD] Publishing...")
             try:
-                publish_btn = page.locator("ytcp-button:has-text('Publish'), button:has-text('Publish')")
-                if publish_btn.count() > 0:
-                    publish_btn.first.click(timeout=15000)
-                    print("[UPLOAD] Published!")
-                else:
-                    # Try Done button if already published
-                    done_btn = page.locator("ytcp-button:has-text('Done'), button:has-text('Done')")
-                    if done_btn.count() > 0:
-                        done_btn.first.click(timeout=10000)
-                        print("[UPLOAD] Clicked Done.")
-            except Exception as e:
-                print(f"[UPLOAD] Publish error: {e}")
+                publish_btn = page.locator("ytcp-button:has-text('Publish')")
+                publish_btn.first.click(timeout=15000)
+                print("[UPLOAD] Published!")
+            except:
+                # If already published, try Done
+                done_btn = page.locator("ytcp-button:has-text('Done')")
+                if done_btn.count() > 0:
+                    done_btn.first.click(timeout=10000)
+                    print("[UPLOAD] Clicked Done.")
 
-            print("[UPLOAD] Upload workflow completed.")
+            print("[UPLOAD] Workflow complete.")
 
         except Exception as e:
             print(f"[ERROR] {e}")
@@ -170,19 +158,18 @@ def main():
     print("[START] YouTube Shorts Uploader started.")
     video_path = get_next_video()
     if not video_path:
-        print("No videos left in queue.")
+        print("No videos left.")
         return
 
-    # Check daily limit
+    # Daily limit check
     try:
         with open("history.txt", "r") as f:
             uploaded_log = f.read().splitlines()
     except:
         uploaded_log = []
     today = time.strftime("%Y-%m-%d")
-    daily_count = sum(1 for line in uploaded_log if line.startswith(today))
-    if daily_count >= UPLOAD_LIMIT:
-        print(f"Daily limit ({UPLOAD_LIMIT}) reached.")
+    if sum(1 for line in uploaded_log if line.startswith(today)) >= UPLOAD_LIMIT:
+        print(f"Daily limit reached.")
         return
 
     vid_num = Path(video_path).stem.split("_")[-1]
