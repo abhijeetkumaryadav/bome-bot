@@ -25,7 +25,7 @@ jobs:
       
       - name: Run API uploader
         env:
-          COOKIES_BASE64: ${{ secrets.COOKIES_BASE64 }}
+          TOKEN_BASE64: ${{ secrets.TOKEN_BASE64 }}
         run: python upload_bot_api.py
       
       - name: Upload logs as artifact
